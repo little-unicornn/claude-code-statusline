@@ -1,49 +1,58 @@
 #!/usr/bin/env python3
-"""Status line pour Claude Code.
+"""Status line for Claude Code.
 
-Claude Code envoie sur stdin un JSON décrivant l'état de la session.
-Ce script en tire 4 lignes affichées sous la barre de prompt :
+Claude Code sends a JSON describing the session state on stdin.
+This script renders two lines below the prompt bar:
 
-  1. modèle + dossier courant
-  2. jauges : contexte, session 5 h, limite hebdo, durée + coût
-  3. aide-mémoire raccourcis (1/2)
-  4. aide-mémoire raccourcis (2/2)
+  1. model + current directory
+  2. gauges: context, 5h session, weekly limit, duration + cost
 
-Installation : voir le README.
+The keyboard-shortcut cheat sheet is hidden by default. Show it on demand:
+
+  python3 statusline.py --keys
+
+See the README for installation.
 """
 import json
 import os
 import sys
 from datetime import datetime
 
-# ─────────────────────────────── Couleurs ANSI ──────────────────────────────
+# ─────────────────────────────── ANSI colors ────────────────────────────────
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
+BLUE = "\033[34m"
+MAGENTA = "\033[35m"
 CYAN = "\033[36m"
 
-SEP = f" {DIM}│{RESET} "          # séparateur entre jauges
-BAR_WIDTH = 12                    # largeur des barres de progression
+SEP = f" {DIM}│{RESET} "          # separator between gauges
+BAR_WIDTH = 12                    # width of the progress bars
 
-# Seuils de couleur des jauges (% d'usage → couleur)
+# Color thresholds for gauge fill / percentage (usage % → color)
 WARN_PCT = 60
 CRIT_PCT = 85
 
-# Raccourcis affichés sur les lignes 3 et 4 : (touche, libellé)
+# Per-gauge accent color, applied to the label so each bar is distinguishable.
+CTX_COLOR = CYAN
+SESSION_COLOR = MAGENTA
+WEEKLY_COLOR = BLUE
+
+# Keyboard-shortcut cheat sheet (shown with `--keys`): (key, label)
 SHORTCUTS = [
-    [("/branch", "disc. parallèle"), ("/resume", "autres disc."),
-     ("Alt+P", "modèle"), ("/effort", "intensité"),
-     ("Alt+T", "thinking"), ("/clear", "vider ctx")],
-    [("⇧Tab", "autonomie"), ("Ctrl+O", "transcript"),
-     ("Ctrl+T", "tâches"), ("Ctrl+B", "background"),
-     ("/rewind", "annuler"), ("Esc", "interrompre")],
+    [("/branch", "parallel chat"), ("/resume", "other chats"),
+     ("Alt+P", "model"), ("/effort", "effort"),
+     ("Alt+T", "thinking"), ("/clear", "clear ctx")],
+    [("⇧Tab", "autonomy"), ("Ctrl+O", "transcript"),
+     ("Ctrl+T", "tasks"), ("Ctrl+B", "background"),
+     ("/rewind", "undo"), ("Esc", "interrupt")],
 ]
 
 
-# ─────────────────────────────── Formatage ──────────────────────────────────
+# ─────────────────────────────── Formatting ─────────────────────────────────
 def human_tokens(n):
     """123456 → '123k' ; 2000000 → '2M'."""
     if n >= 1_000_000:
@@ -54,7 +63,7 @@ def human_tokens(n):
 
 
 def human_duration(ms):
-    """Millisecondes → '12s' / '3m05s' / '1h02m'."""
+    """Milliseconds → '12s' / '3m05s' / '1h02m'."""
     s = int(ms // 1000)
     if s < 60:
         return f"{s}s"
@@ -66,7 +75,7 @@ def human_duration(ms):
 
 
 def fmt_reset(ts):
-    """Timestamp unix → heure de remise à zéro lisible ('14:30 (dans 3h)')."""
+    """Unix timestamp → readable reset time ('14:30 (in 3h)')."""
     if not ts:
         return "?"
     try:
@@ -77,11 +86,11 @@ def fmt_reset(ts):
     delta_h = (dt - now).total_seconds() / 3600
     when = dt.strftime("%H:%M") if dt.date() == now.date() else dt.strftime("%a %d %H:%M")
     if 0 <= delta_h < 24:
-        return f"{when} {DIM}(dans {delta_h:.0f}h){RESET}"
+        return f"{when} {DIM}(in {delta_h:.0f}h){RESET}"
     return when
 
 
-# ─────────────────────────────── Rendu ──────────────────────────────────────
+# ─────────────────────────────── Rendering ──────────────────────────────────
 def pct_color(pct):
     if pct >= CRIT_PCT:
         return RED
@@ -95,10 +104,14 @@ def bar(pct, width=BAR_WIDTH):
     return "█" * filled + "░" * (width - filled)
 
 
-def gauge(label, pct, extra=""):
-    """Bloc 'label [████░░░░] NN%' coloré selon le taux d'usage."""
+def gauge(label, pct, extra="", label_color=DIM):
+    """Block 'label [████░░░░] NN%'.
+
+    The label uses its per-gauge accent color; the bar and percentage are
+    colored by usage (green / yellow / red) so they keep acting as a warning.
+    """
     c = pct_color(pct)
-    return f"{DIM}{label}{RESET} {c}[{bar(pct)}]{RESET} {c}{pct:.0f}%{RESET}{extra}"
+    return f"{label_color}{label}{RESET} {c}[{bar(pct)}]{RESET} {c}{pct:.0f}%{RESET}{extra}"
 
 
 def render_header(model_name, cwd_short):
@@ -114,8 +127,8 @@ def render_gauges(data):
     size = ctx.get("context_window_size", 0) or 0
     tokens = ctx.get("total_input_tokens", 0) or 0
     parts.append(gauge(
-        "ctx", used,
-        extra=f" {DIM}· {free:.0f}% libre "
+        "ctx", used, label_color=CTX_COLOR,
+        extra=f" {DIM}· {free:.0f}% free "
               f"({human_tokens(tokens)}/{human_tokens(size)}){RESET}"))
 
     rl = data.get("rate_limits", {})
@@ -124,15 +137,15 @@ def render_gauges(data):
     if five:
         fp = five.get("used_percentage", 0) or 0
         parts.append(gauge(
-            "sess 5h", fp,
-            extra=f" {DIM}· {100 - fp:.0f}% libre · reset {RESET}"
+            "sess 5h", fp, label_color=SESSION_COLOR,
+            extra=f" {DIM}· {100 - fp:.0f}% free · reset {RESET}"
                   f"{fmt_reset(five.get('resets_at'))}"))
 
     week = rl.get("seven_day", {})
     if week:
         wp = week.get("used_percentage", 0) or 0
         parts.append(gauge(
-            "hebdo", wp,
+            "weekly", wp, label_color=WEEKLY_COLOR,
             extra=f" {DIM}· reset {RESET}{fmt_reset(week.get('resets_at'))}"))
 
     cost = data.get("cost", {})
@@ -150,8 +163,13 @@ def render_shortcuts():
             "   " + fmt(SHORTCUTS[1])]
 
 
-# ─────────────────────────────── Entrée ─────────────────────────────────────
+# ─────────────────────────────── Entry point ────────────────────────────────
 def main():
+    # `--keys` / `keys`: print the shortcut cheat sheet and exit.
+    if any(a in ("--keys", "-k", "keys") for a in sys.argv[1:]):
+        print("\n".join(render_shortcuts()))
+        return
+
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
@@ -164,9 +182,8 @@ def main():
     cwd = workspace.get("current_dir") or data.get("cwd") or os.getcwd()
     cwd_short = os.path.basename(cwd.rstrip("/")) or cwd
 
-    lines = [render_header(model_name, cwd_short), render_gauges(data)]
-    lines += render_shortcuts()
-    print("\n".join(lines))
+    print(render_header(model_name, cwd_short))
+    print(render_gauges(data))
 
 
 if __name__ == "__main__":

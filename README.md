@@ -1,34 +1,51 @@
 # claude-code-statusline
 
-Status line à 4 lignes pour [Claude Code](https://claude.com/claude-code), affichée sous la barre de prompt.
-
-![lignes affichées](#) <!-- ajoute une capture si tu veux -->
+A clean status line for [Claude Code](https://claude.com/claude-code), shown below the prompt bar.
 
 ```
  Opus 4.8   chase-optimizer
-ctx [█████░░░░░░░] 42% · 58% libre (420k/1M) │ sess 5h [█████████░░░] 71% · 29% libre · reset 19:19 (dans 2h) │ hebdo [████░░░░░░░░] 33% · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
-⌨  /branch disc. parallèle  /resume autres disc.  Alt+P modèle  /effort intensité  Alt+T thinking  /clear vider ctx
-   ⇧Tab autonomie  Ctrl+O transcript  Ctrl+T tâches  Ctrl+B background  /rewind annuler  Esc interrompre
+ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h [█████████░░░] 71% · 29% free · reset 19:19 (in 2h) │ weekly [████░░░░░░░░] 33% · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
 ```
 
-## Ce qui est affiché
+## What it shows
 
-1. **Modèle** + dossier courant.
-2. **Jauges** colorées (vert < 60 %, jaune ≥ 60 %, rouge ≥ 85 %) :
-   - `ctx` — fenêtre de contexte utilisée + tokens.
-   - `sess 5h` — quota de la fenêtre glissante de 5 h + heure de reset.
-   - `hebdo` — quota hebdomadaire + heure de reset.
-   - durée de session + coût en $.
-3. & 4. **Aide-mémoire** des raccourcis Claude Code.
+1. **Model** + current directory.
+2. **Gauges** — each label has its own accent color (ctx = cyan, sess 5h = magenta,
+   weekly = blue), while the bar fill and percentage are colored by usage
+   (green < 60%, yellow ≥ 60%, red ≥ 85%) so they double as a warning:
+   - `ctx` — context window used + tokens.
+   - `sess 5h` — rolling 5-hour quota + reset time.
+   - `weekly` — weekly quota + reset time.
+   - session duration + cost in USD.
+
+## Keyboard cheat sheet
+
+The shortcut cheat sheet is **hidden by default** to keep the status line compact.
+Show it on demand:
+
+```bash
+python3 ~/.claude/statusline.py --keys
+```
+
+```
+⌨  /branch parallel chat  /resume other chats  Alt+P model  /effort effort  Alt+T thinking  /clear clear ctx
+   ⇧Tab autonomy  Ctrl+O transcript  Ctrl+T tasks  Ctrl+B background  /rewind undo  Esc interrupt
+```
 
 ## Installation
 
 ```bash
 git clone git@github.com:little-unicornn/claude-code-statusline.git
-cp claude-code-statusline/statusline.py ~/.claude/statusline.py
+cd claude-code-statusline
+./install.sh
 ```
 
-Puis ajoute dans `~/.claude/settings.json` :
+`install.sh` copies the script to `~/.claude/statusline.py` and enables `statusLine`
+in `~/.claude/settings.json` (existing settings are preserved). Or do it by hand:
+
+```bash
+cp statusline.py ~/.claude/statusline.py
+```
 
 ```json
 {
@@ -40,29 +57,24 @@ Puis ajoute dans `~/.claude/settings.json` :
 }
 ```
 
-Ou laisse le script faire la copie + la config :
+Requirements: Python 3 (no external dependencies), a terminal with ANSI color and UTF-8.
 
-```bash
-./install.sh
-```
+## Customization
 
-Prérequis : Python 3 (aucune dépendance externe). Un terminal qui supporte les couleurs ANSI et l'UTF-8.
+Everything is at the top of `statusline.py`:
 
-## Personnalisation
+- `WARN_PCT` / `CRIT_PCT` — gauge color thresholds.
+- `BAR_WIDTH` — bar width.
+- `CTX_COLOR` / `SESSION_COLOR` / `WEEKLY_COLOR` — per-gauge label accent colors.
+- `SHORTCUTS` — the entries shown by `--keys`.
 
-Tout est en haut de `statusline.py` :
+## Input format
 
-- `WARN_PCT` / `CRIT_PCT` — seuils de couleur des jauges.
-- `BAR_WIDTH` — largeur des barres.
-- `SHORTCUTS` — les raccourcis affichés sur les lignes 3 et 4.
-
-## Format d'entrée
-
-Claude Code envoie un JSON sur stdin. Champs utilisés : `model.display_name`,
+Claude Code sends a JSON object on stdin. Fields used: `model.display_name`,
 `workspace.current_dir`, `context_window.*`, `rate_limits.five_hour`,
 `rate_limits.seven_day`, `cost.total_cost_usd`, `cost.total_duration_ms`.
-Tous les champs sont optionnels — le script ne plante pas si l'un manque.
+All fields are optional — the script never crashes if one is missing.
 
-## Licence
+## License
 
 MIT
