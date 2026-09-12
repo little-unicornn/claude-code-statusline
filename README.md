@@ -4,19 +4,34 @@ A clean status line for [Claude Code](https://claude.com/claude-code), shown bel
 
 ```
  Opus 4.8   chase-optimizer
-ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h [█████████░░░] 71% · 29% free · reset 19:19 (in 2h) │ weekly [████░░░░░░░░] 33% · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
+ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h [█████████░░░] 71% · 29% free · reset 19:19 (in 2h) │ weekly [████░░░░░░░░] 33% · reset Fri 26 20:49 │ fable [███████████░] 92% · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
 ```
 
 ## What it shows
 
 1. **Model** + current directory.
 2. **Gauges** — each label has its own accent color (ctx = cyan, sess 5h = magenta,
-   weekly = blue), while the bar fill and percentage are colored by usage
-   (green < 60%, yellow ≥ 60%, red ≥ 85%) so they double as a warning:
+   weekly = blue, per-model = orange), while the bar fill and percentage are
+   colored by usage (green < 60%, yellow ≥ 60%, red ≥ 85%) so they double as a
+   warning:
    - `ctx` — context window used + tokens.
    - `sess 5h` — rolling 5-hour quota + reset time.
    - `weekly` — weekly quota + reset time.
+   - `fable` (or any other per-model weekly limit: opus, sonnet…) + reset time.
    - session duration + cost in USD.
+
+### Per-model limits (Fable…)
+
+Claude Code does not include per-model quotas in the JSON it sends to the status
+line, so the script fetches them itself from the claude.ai usage endpoint
+(`/api/oauth/usage`) using the OAuth token Claude Code already stores locally
+(`~/.claude/.credentials.json`, or the macOS keychain).
+
+The fetch runs in a **detached background process** and the result is cached in
+`~/.cache/claude-code-statusline/usage.json` for 60 s, so rendering never waits
+on the network. One gauge is shown per model-scoped limit the server reports;
+nothing is shown when no such limit exists (API key, Bedrock, Vertex…).
+Set `SHOW_MODEL_LIMITS = False` to disable it.
 
 ## Keyboard cheat sheet
 
@@ -65,7 +80,8 @@ Everything is at the top of `statusline.py`:
 
 - `WARN_PCT` / `CRIT_PCT` — gauge color thresholds.
 - `BAR_WIDTH` — bar width.
-- `CTX_COLOR` / `SESSION_COLOR` / `WEEKLY_COLOR` — per-gauge label accent colors.
+- `CTX_COLOR` / `SESSION_COLOR` / `WEEKLY_COLOR` / `MODEL_COLOR` — per-gauge label accent colors.
+- `SHOW_MODEL_LIMITS` / `USAGE_TTL` / `USAGE_CACHE` — per-model limit fetching.
 - `SHORTCUTS` — the entries shown by `--keys`.
 
 ## Input format
@@ -74,6 +90,8 @@ Claude Code sends a JSON object on stdin. Fields used: `model.display_name`,
 `workspace.current_dir`, `context_window.*`, `rate_limits.five_hour`,
 `rate_limits.seven_day`, `cost.total_cost_usd`, `cost.total_duration_ms`.
 All fields are optional — the script never crashes if one is missing.
+Per-model limits come from the usage endpoint's `limits[]` entries of kind
+`weekly_scoped` (`scope.model.display_name`, `percent`, `resets_at`).
 
 ## License
 
