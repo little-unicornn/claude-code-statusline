@@ -4,7 +4,7 @@ A clean status line for [Claude Code](https://claude.com/claude-code), shown bel
 
 ```
  Opus 4.8   chase-optimizer
-ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h [█████████░░░] 71% · 29% free · reset 19:19 (in 2h) │ weekly [████░░░░░░░░] 33% · reset Fri 26 20:49 │ fable [███████████░] 92% · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
+ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h [█████████░░░] 71% · 29% free · reset 19:19 (in 2h) │ weekly [████┃░░░░░░░] 33% · pace 38% (-5) · reset Fri 26 20:49 │ fable [██████████┃░] 92% · pace 38% (+54) · reset Fri 26 20:49 │ ⏱ 1h02m · $1.23
 ```
 
 ## What it shows
@@ -19,6 +19,22 @@ ctx [█████░░░░░░░] 42% · 58% free (420k/1M) │ sess 5h
    - `weekly` — weekly quota + reset time.
    - `fable` (or any other per-model weekly limit: opus, sonnet…) + reset time.
    - session duration + cost in USD.
+
+### Weekly pace
+
+The weekly gauges (`weekly` and each per-model limit) carry a `┃` marker at the
+point usage would have reached if the quota were spent evenly over the 7-day
+window: the window starts 7 days before `resets_at`, and the expected share is
+elapsed time / 7 days. The gap in points follows it, `pace 38% (+12)`: green
+when at or below pace (up to `PACE_TOLERANCE` points above), yellow beyond,
+red beyond twice the tolerance. Set `SHOW_WEEKLY_PACE = False` to hide it.
+
+### Rate-limit snapshot
+
+Every render also writes the `rate_limits` object Claude Code provides to
+`~/.cache/claude-code-statusline/rate_limits.json` (with a `written_at`
+timestamp), so other local tools can read the current quota without polling
+the usage endpoint.
 
 ### Per-model limits (Fable…)
 
@@ -82,6 +98,7 @@ Everything is at the top of `statusline.py`:
 - `BAR_WIDTH` — bar width.
 - `CTX_COLOR` / `SESSION_COLOR` / `WEEKLY_COLOR` / `MODEL_COLOR` — per-gauge label accent colors.
 - `SHOW_MODEL_LIMITS` / `USAGE_TTL` / `USAGE_CACHE` — per-model limit fetching.
+- `SHOW_WEEKLY_PACE` / `PACE_TOLERANCE` / `PACE_MARK` — weekly pace marker and gap.
 - `SHORTCUTS` — the entries shown by `--keys`.
 
 ## Input format

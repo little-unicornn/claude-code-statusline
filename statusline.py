@@ -60,6 +60,14 @@ USAGE_TTL = 60          # seconds before a cached value is refreshed
 USAGE_TIMEOUT = 5       # seconds for the background HTTP request
 CREDENTIALS_FILE = os.path.expanduser("~/.claude/.credentials.json")
 
+# Weekly pace: where usage "should" be now if the quota were spent evenly over
+# the 7-day window (rule of three on elapsed time). Shown as a ┃ marker in the
+# weekly bars plus the gap in points (+ = ahead of pace, i.e. burning too fast).
+SHOW_WEEKLY_PACE = True
+WEEK_SECONDS = 7 * 24 * 3600
+PACE_MARK = "┃"
+PACE_TOLERANCE = 5      # points of gap still shown as "on pace" (green)
+
 # Keyboard-shortcut cheat sheet (shown with `--keys`): (key, label)
 SHORTCUTS = [
     [("/branch", "parallel chat"), ("/resume", "other chats"),
@@ -225,19 +233,49 @@ def pct_color(pct):
     return GREEN
 
 
-def bar(pct, width=BAR_WIDTH):
+def bar(pct, width=BAR_WIDTH, mark_pct=None, color=""):
     filled = max(0, min(width, int(round(pct / 100 * width))))
-    return "█" * filled + "░" * (width - filled)
+    cells = ["█"] * filled + ["░"] * (width - filled)
+    if mark_pct is not None:
+        i = max(0, min(width - 1, int(mark_pct / 100 * width)))
+        cells[i] = f"{RESET}{BOLD}{PACE_MARK}{RESET}{color}"
+    return "".join(cells)
 
 
-def gauge(label, pct, extra="", label_color=DIM):
+def weekly_pace(resets_at):
+    """Expected % used right now if spent evenly over the week, or None."""
+    if not SHOW_WEEKLY_PACE:
+        return None
+    end = parse_ts(resets_at)
+    if end is None:
+        return None
+    remaining = (end - datetime.now()).total_seconds()
+    elapsed = WEEK_SECONDS - remaining
+    if not 0 <= elapsed <= WEEK_SECONDS:
+        return None
+    return elapsed / WEEK_SECONDS * 100
+
+
+def pace_text(pct, expected):
+    if expected is None:
+        return ""
+    gap = pct - expected
+    if gap > PACE_TOLERANCE:
+        c = RED if gap > 2 * PACE_TOLERANCE else YELLOW
+    else:
+        c = GREEN
+    return f" {DIM}· pace {RESET}{expected:.0f}% {c}({gap:+.0f}){RESET}"
+
+
+def gauge(label, pct, extra="", label_color=DIM, mark_pct=None):
     """Block 'label [████░░░░] NN%'.
 
     The label uses its per-gauge accent color; the bar and percentage are
     colored by usage (green / yellow / red) so they keep acting as a warning.
     """
     c = pct_color(pct)
-    return f"{label_color}{label}{RESET} {c}[{bar(pct)}]{RESET} {c}{pct:.0f}%{RESET}{extra}"
+    return (f"{label_color}{label}{RESET} {c}[{bar(pct, mark_pct=mark_pct, color=c)}]{RESET} "
+            f"{c}{pct:.0f}%{RESET}{extra}")
 
 
 def render_header(model_name, cwd_short):
@@ -270,14 +308,18 @@ def render_gauges(data):
     week = rl.get("seven_day", {})
     if week:
         wp = week.get("used_percentage", 0) or 0
+        exp = weekly_pace(week.get("resets_at"))
         parts.append(gauge(
-            "weekly", wp, label_color=WEEKLY_COLOR,
-            extra=f" {DIM}· reset {RESET}{fmt_reset(week.get('resets_at'))}"))
+            "weekly", wp, label_color=WEEKLY_COLOR, mark_pct=exp,
+            extra=f"{pace_text(wp, exp)} {DIM}· reset {RESET}"
+                  f"{fmt_reset(week.get('resets_at'))}"))
 
     for lim in model_limits():
+        exp = weekly_pace(lim.get("resets_at"))
         parts.append(gauge(
-            lim["name"].lower(), lim["pct"], label_color=MODEL_COLOR,
-            extra=f" {DIM}· reset {RESET}{fmt_reset(lim.get('resets_at'))}"))
+            lim["name"].lower(), lim["pct"], label_color=MODEL_COLOR, mark_pct=exp,
+            extra=f"{pace_text(lim['pct'], exp)} {DIM}· reset {RESET}"
+                  f"{fmt_reset(lim.get('resets_at'))}"))
 
     cost = data.get("cost", {})
     total_cost = cost.get("total_cost_usd", 0) or 0
@@ -292,6 +334,30 @@ def render_shortcuts():
         return "  ".join(f"{CYAN}{key}{RESET} {DIM}{label}{RESET}" for key, label in row)
     return [f"{DIM}⌨{RESET}  " + fmt(SHORTCUTS[0]),
             "   " + fmt(SHORTCUTS[1])]
+
+
+# ─────────────────────────── Rate limits snapshot ───────────────────────────
+RATE_LIMITS_FILE = os.path.expanduser("~/.cache/claude-code-statusline/rate_limits.json")
+
+
+def save_rate_limits(data):
+    """Drop the rate_limits Claude Code hands us into a file, for the cockpit.
+
+    Free: no network call, unlike the usage endpoint (which answers 429 as
+    soon as it is polled). Fresh whenever a session is rendering — which is
+    exactly when the quota moves.
+    """
+    rl = data.get("rate_limits")
+    if not rl:
+        return
+    try:
+        os.makedirs(os.path.dirname(RATE_LIMITS_FILE), exist_ok=True)
+        tmp = f"{RATE_LIMITS_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({"rate_limits": rl, "written_at": time.time()}, f)
+        os.replace(tmp, RATE_LIMITS_FILE)
+    except OSError:
+        pass
 
 
 # ─────────────────────────────── Entry point ────────────────────────────────
@@ -309,6 +375,8 @@ def main():
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         data = {}
+
+    save_rate_limits(data)
 
     model = data.get("model", {})
     model_name = model.get("display_name", model.get("id", "?"))
